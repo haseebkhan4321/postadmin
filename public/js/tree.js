@@ -1,17 +1,28 @@
 import { api, paths } from './api.js';
-import { h, clear, route, formatNumber } from './ui.js';
+import { h, clear, route, formatNumber, groupConnections } from './ui.js';
 
 const treeEl = document.getElementById('tree');
 const filterEl = document.getElementById('tree-filter');
 
 const cache = new Map(); // api url -> Promise
-const expanded = loadExpanded();
+const expanded = loadSet('pa-tree');
+// Nodes that start open (connection groups) remember being closed instead.
+const collapsed = loadSet('pa-tree-collapsed');
 
-function loadExpanded() {
-  try { return new Set(JSON.parse(localStorage.getItem('pa-tree') || '[]')); } catch { return new Set(); }
+function loadSet(name) {
+  try { return new Set(JSON.parse(localStorage.getItem(name) || '[]')); } catch { return new Set(); }
 }
 function saveExpanded() {
-  try { localStorage.setItem('pa-tree', JSON.stringify([...expanded].slice(-300))); } catch { /* ignore */ }
+  try {
+    localStorage.setItem('pa-tree', JSON.stringify([...expanded].slice(-300)));
+    localStorage.setItem('pa-tree-collapsed', JSON.stringify([...collapsed].slice(-100)));
+  } catch { /* ignore */ }
+}
+const isOpen = (key, defaultOpen) => (defaultOpen ? !collapsed.has(key) : expanded.has(key));
+function setOpen(key, open, defaultOpen) {
+  const set = defaultOpen ? collapsed : expanded;
+  if (open === !defaultOpen) set.add(key); else set.delete(key);
+  saveExpanded();
 }
 
 function load(url) {
@@ -23,24 +34,24 @@ export function invalidateTree() {
   cache.clear();
 }
 
-const ICONS = { conn: '🖧', db: '🛢', schema: '📁', table: '▦', view: '👁', matview: '◫', sequence: '#', foreign: '⇄', function: 'ƒ', procedure: 'ƒ' };
+const ICONS = { db: '🛢', schema: '📁', table: '▦', view: '👁', matview: '◫', sequence: '#', foreign: '⇄', function: 'ƒ', procedure: 'ƒ' };
 const GROUPS = [['table', 'Tables'], ['view', 'Views'], ['matview', 'Materialized views'], ['foreign', 'Foreign tables'], ['sequence', 'Sequences']];
 
 let currentCtx = {};
 
-function node({ key, icon, label, meta, href, active, title, loadChildren, dim }) {
-  const isOpen = key && expanded.has(key);
+// defaultOpen: starts expanded until the user collapses it. cls: extra class for the node.
+function node({ key, icon, label, meta, href, active, title, loadChildren, dim, defaultOpen, cls }) {
   const children = h('div', { class: 'tree-children' });
-  const toggle = h('span', { class: 'tree-toggle' }, loadChildren ? (isOpen ? '▼' : '▶') : '');
+  const toggle = h('span', { class: 'tree-toggle' }, loadChildren ? '▸' : '');
   const row = h(href ? 'a' : 'div', {
     class: 'tree-row' + (active ? ' active' : ''), href, title: title || label,
     style: dim ? { opacity: 0.6 } : undefined,
-  }, toggle, h('span', { class: 'tree-icon' }, icon), h('span', { class: 'tree-label' }, label),
+  }, toggle, icon !== undefined ? h('span', { class: 'tree-icon' }, icon) : null, h('span', { class: 'tree-label' }, label),
   meta !== undefined ? h('span', { class: 'tree-meta' }, meta) : null);
 
-  const el = h('div', { class: 'tree-node' }, row, children);
+  const el = h('div', { class: 'tree-node' + (cls ? ' ' + cls : '') }, row, children);
   const open = async () => {
-    toggle.textContent = '▼';
+    el.classList.add('open');
     clear(children, h('div', { class: 'tree-loading' }, 'loading…'));
     try {
       clear(children, await loadChildren());
@@ -48,25 +59,21 @@ function node({ key, icon, label, meta, href, active, title, loadChildren, dim }
       clear(children, h('div', { class: 'tree-empty' }, err.message));
     }
   };
+  const close = () => { el.classList.remove('open'); clear(children); };
   if (loadChildren) {
     toggle.addEventListener('click', ev => {
       ev.preventDefault();
       ev.stopPropagation();
-      if (expanded.has(key)) {
-        expanded.delete(key);
-        toggle.textContent = '▶';
-        clear(children);
-      } else {
-        expanded.add(key);
-        open();
-      }
-      saveExpanded();
+      const next = !isOpen(key, defaultOpen);
+      setOpen(key, next, defaultOpen);
+      if (next) open(); else close();
     });
-    // Clicking the label navigates and also expands.
+    // Clicking a link label navigates and also expands; a plain header row toggles.
     row.addEventListener('click', () => {
-      if (!expanded.has(key)) { expanded.add(key); saveExpanded(); open(); }
+      if (!href && isOpen(key, defaultOpen)) { setOpen(key, false, defaultOpen); close(); return; }
+      if (!isOpen(key, defaultOpen)) { setOpen(key, true, defaultOpen); open(); }
     });
-    if (isOpen) open();
+    if (isOpen(key, defaultOpen)) open();
   }
   return el;
 }
@@ -134,24 +141,51 @@ async function objects(id, db, schema) {
   return out.length ? out : h('div', { class: 'tree-empty' }, q ? 'no matches' : 'empty');
 }
 
+function connection(c) {
+  return node({
+    key: `c:${c.id}`, cls: 'tree-conn',
+    icon: h('span', { class: 'conn-dot', style: { background: c.color || 'var(--accent)' } }),
+    label: c.name,
+    title: `${c.name}\n${c.uri}`,
+    href: route('c', c.id),
+    active: currentCtx.id === c.id && !currentCtx.db,
+    loadChildren: () => databases(c.id),
+  });
+}
+
+// Root of the tree: connection groups, each holding its connections, which expand into databases.
 export async function renderTree(ctx) {
   currentCtx = ctx;
-  if (!ctx.id) {
-    const conns = await api.get('/connections').catch(() => []);
-    clear(treeEl, conns.length
-      ? conns.map(c => node({ icon: ICONS.conn, label: c.name, href: route('c', c.id) }))
-      : h('div', { class: 'tree-empty' }, 'Add a connection to begin'));
-    return;
-  }
-  // The current database and schema are always expanded.
+  // The current connection, database and schema are always expanded.
+  if (ctx.id) expanded.add(`c:${ctx.id}`);
   if (ctx.db) expanded.add(`db:${ctx.id}/${ctx.db}`);
   if (ctx.schema) expanded.add(`s:${ctx.id}/${ctx.db}/${ctx.schema}`);
   saveExpanded();
-  const scroll = treeEl.scrollTop;
-  try {
-    clear(treeEl, await databases(ctx.id));
-  } catch (err) {
-    clear(treeEl, h('div', { class: 'tree-empty' }, err.message));
+
+  const conns = await api.get('/connections').catch(() => []);
+  if (!conns.length) {
+    clear(treeEl, h('div', { class: 'tree-empty' }, 'Add a connection to begin'));
+    return;
   }
+  // The filter matches connection names; open connections stay visible so it can match their tables.
+  const q = filterEl.value.trim().toLowerCase();
+  const visible = c => !q || c.name.toLowerCase().includes(q) || expanded.has(`c:${c.id}`);
+  const groups = groupConnections(conns)
+    .map(([g, list]) => [g, list.filter(visible)])
+    .filter(([, list]) => list.length);
+
+  const scroll = treeEl.scrollTop;
+  clear(treeEl, groups.length
+    ? groups.map(([g, list]) => {
+      const key = `g:${g}`;
+      // Keep the current connection's group open, and every group open while filtering.
+      if (q || list.some(c => c.id === ctx.id)) collapsed.delete(key);
+      return node({
+        key, cls: 'tree-conn-group', defaultOpen: true,
+        label: g, meta: list.length,
+        loadChildren: async () => list.map(connection),
+      });
+    })
+    : h('div', { class: 'tree-empty' }, 'No matching connections'));
   treeEl.scrollTop = scroll;
 }

@@ -16,6 +16,13 @@ function maskUri(uri) {
   }
 }
 
+// Connections without a group belong to the built-in Local group, which is never stored by name.
+// Undefined keys are dropped when the file is written.
+function groupOf(body) {
+  const group = String(body.group || '').trim();
+  return group && group.toLowerCase() !== 'local' ? group : undefined;
+}
+
 function validate(body) {
   const name = String(body.name || '').trim();
   const uri = String(body.uri || '').trim();
@@ -44,18 +51,23 @@ router.post('/', (req, res) => {
   const error = validate(req.body);
   if (error) return res.status(400).json({ error });
   const { name, uri, color } = req.body;
-  res.status(201).json(store.saveConnection({ name: name.trim(), uri: uri.trim(), color }));
+  res.status(201).json(store.saveConnection({ name: name.trim(), uri: uri.trim(), color, group: groupOf(req.body) }));
 });
 
 router.put('/:id', wrap(async (req, res) => {
   const error = validate(req.body);
   if (error) return res.status(400).json({ error });
   const { name, uri, color } = req.body;
-  const conn = store.saveConnection({ id: req.params.id, name: name.trim(), uri: uri.trim(), color });
+  const conn = store.saveConnection({ id: req.params.id, name: name.trim(), uri: uri.trim(), color, group: groupOf(req.body) });
   if (!conn) return res.status(404).json({ error: 'Connection not found' });
   await closePools(req.params.id);
   res.json(conn);
 }));
+
+router.delete('/groups/:name', (req, res) => {
+  if (!groupOf({ group: req.params.name })) return res.status(400).json({ error: 'The Local group cannot be deleted' });
+  res.json({ moved: store.clearGroup(req.params.name) });
+});
 
 router.delete('/:id', wrap(async (req, res) => {
   await closePools(req.params.id);

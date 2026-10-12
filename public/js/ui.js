@@ -138,3 +138,17 @@ export async function postDownload(url, body) {
 
 const NUMERIC_TYPES = /^(smallint|integer|bigint|numeric|real|double precision|decimal|money|oid)/;
 export const isNumericType = t => NUMERIC_TYPES.test(t || '');
+
+// Connections without a group belong to this built-in group; it always exists and cannot be deleted.
+export const DEFAULT_GROUP = 'Local';
+
+// Splits saved connections into [groupName, conns] pairs: Local first, then named groups alphabetically.
+export function groupConnections(conns) {
+  const groups = new Map([[DEFAULT_GROUP, []]]);
+  for (const c of conns) {
+    const g = c.group || DEFAULT_GROUP;
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(c);
+  }
+  return [...groups].sort(([a], [b]) => (b === DEFAULT_GROUP) - (a === DEFAULT_GROUP) || a.localeCompare(b, undefined, { sensitivity: 'base' }));
+}

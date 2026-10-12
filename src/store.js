@@ -33,16 +33,16 @@ function getConnection(id) {
   return listConnections().find(c => c.id === id) || null;
 }
 
-function saveConnection({ id, name, uri, color }) {
+function saveConnection({ id, name, uri, color, group }) {
   const all = listConnections();
   if (id) {
     const existing = all.find(c => c.id === id);
     if (!existing) return null;
-    Object.assign(existing, { name, uri, color, updatedAt: new Date().toISOString() });
+    Object.assign(existing, { name, uri, color, group, updatedAt: new Date().toISOString() });
     writeJson(CONN_FILE, all);
     return existing;
   }
-  const conn = { id: crypto.randomUUID(), name, uri, color: color || '#336791', createdAt: new Date().toISOString() };
+  const conn = { id: crypto.randomUUID(), name, uri, color: color || '#336791', group, createdAt: new Date().toISOString() };
   all.push(conn);
   writeJson(CONN_FILE, all);
   return conn;
@@ -53,6 +53,17 @@ function deleteConnection(id) {
   const next = all.filter(c => c.id !== id);
   writeJson(CONN_FILE, next);
   return next.length !== all.length;
+}
+
+// Moves every connection in the group back to the default (Local) group.
+function clearGroup(group) {
+  const all = listConnections();
+  let moved = 0;
+  for (const c of all) {
+    if (c.group === group) { delete c.group; moved++; }
+  }
+  if (moved) writeJson(CONN_FILE, all);
+  return moved;
 }
 
 function listHistory(connId) {
@@ -72,6 +83,6 @@ function clearHistory(connId) {
 }
 
 module.exports = {
-  DATA_DIR, listConnections, getConnection, saveConnection, deleteConnection,
+  DATA_DIR, listConnections, getConnection, saveConnection, deleteConnection, clearGroup,
   listHistory, addHistory, clearHistory,
 };

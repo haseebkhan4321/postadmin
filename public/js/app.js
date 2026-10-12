@@ -16,7 +16,6 @@ import * as erd from './pages/erd.js';
 const content = document.getElementById('content');
 const tabsEl = document.getElementById('tabs');
 const crumbsEl = document.getElementById('breadcrumbs');
-const connSelect = document.getElementById('conn-select');
 
 // Tabs per level: [key, label, module, optional render-function name]
 const TABS = {
@@ -62,14 +61,6 @@ export function refresh({ tree = true, rerender = true } = {}) {
   if (rerender) render();
 }
 
-async function renderConnSelect(ctx) {
-  const conns = await api.get('/connections').catch(() => []);
-  clear(connSelect,
-    h('option', { value: '' }, conns.length ? '— Select connection —' : 'No saved connections'),
-    conns.map(c => h('option', { value: c.id }, c.name)));
-  connSelect.value = ctx.id || '';
-}
-
 function renderCrumbs(ctx, info) {
   const items = [h('a', { href: '#/' }, 'Connections')];
   const add = (kind, label, href) => items.push(h('span', { class: 'sep' }, '›'), h('a', { href }, h('span', { class: 'kind' }, kind), label));
@@ -89,7 +80,6 @@ async function render() {
   const popup = ctx.params.get('popup') === '1';
   document.body.classList.toggle('popup', popup);
   document.title = popup ? `SQL · ${ctx.db || 'PostAdmin'}` : 'PostAdmin';
-  renderConnSelect(ctx);
 
   if (ctx.level === 'home') {
     renderCrumbs(ctx);
@@ -148,11 +138,22 @@ async function render() {
 
 // --- chrome ---------------------------------------------------------------
 
-connSelect.addEventListener('change', () => {
-  location.hash = connSelect.value ? route('c', connSelect.value) : '#/';
+document.getElementById('conn-add').addEventListener('click', () => home.newConnection());
+const filterInput = document.getElementById('tree-filter');
+// "/" focuses the sidebar filter, Escape clears it.
+document.addEventListener('keydown', ev => {
+  if (ev.key !== '/' || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  const t = ev.target;
+  if (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.closest?.('.CodeMirror')) return;
+  ev.preventDefault();
+  filterInput.focus();
+  filterInput.select();
+});
+filterInput.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape' && filterInput.value) { filterInput.value = ''; renderTree(parseHash()); }
 });
 document.getElementById('tree-refresh').addEventListener('click', () => { infoCache.clear(); refresh(); });
-document.getElementById('tree-filter').addEventListener('input', () => renderTree(parseHash()));
+filterInput.addEventListener('input', () => renderTree(parseHash()));
 
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;

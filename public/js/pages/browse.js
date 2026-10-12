@@ -25,12 +25,27 @@ export async function render(ctx, el) {
   const sizeSelect = h('select', {
     value: String(st.size),
     onchange: () => { st.size = Number(sizeSelect.value); st.page = 1; load(); },
-  }, [25, 50, 100, 250, 500, 1000].map(n => h('option', { value: String(n) }, `${n} rows`)));
+  }, [25, 50, 100, 250, 500, 1000].map(n => h('option', { value: String(n) }, `${n} rows`)),
+  h('option', { value: '0' }, 'All rows'));
 
   const pagerTop = h('div', { class: 'pager' });
   const pagerBottom = h('div', { class: 'pager' });
   const gridHost = h('div');
-  const sqlInfo = h('div', { class: 'muted small mono', style: { marginBottom: '6px' } });
+  // The generated SELECT is hidden behind a toggle; the choice is remembered across tables.
+  let showSql = false;
+  try { showSql = localStorage.getItem('pa-browse-sql') === '1'; } catch { /* storage unavailable */ }
+  const sqlInfo = h('div', { class: 'muted small mono sql-info', hidden: !showSql });
+  const sqlToggle = h('button', {
+    class: 'icon-btn sql-toggle' + (showSql ? ' active' : ''), title: 'Show the SQL query',
+    onclick: () => {
+      showSql = !showSql;
+      sqlInfo.hidden = !showSql;
+      sqlToggle.classList.toggle('active', showSql);
+      sqlToggle.title = showSql ? 'Hide the SQL query' : 'Show the SQL query';
+      try { localStorage.setItem('pa-browse-sql', showSql ? '1' : '0'); } catch { /* storage unavailable */ }
+    },
+  }, 'SQL');
+  if (showSql) sqlToggle.title = 'Hide the SQL query';
   const bulk = h('div', { class: 'toolbar', style: { marginTop: '8px' } });
 
   append(el,
@@ -40,7 +55,7 @@ export async function render(ctx, el) {
       st.filter ? h('button', { onclick: () => { st.filter = ''; filterInput.value = ''; st.page = 1; load(); } }, 'Clear') : null,
       sizeSelect,
       h('button', { title: 'Reload', onclick: () => load() }, '↻')),
-    h('div', { class: 'toolbar' }, pagerTop),
+    h('div', { class: 'toolbar' }, pagerTop, h('span', { class: 'spacer' }), sqlToggle),
     sqlInfo,
     gridHost,
     h('div', { class: 'toolbar', style: { marginTop: '8px' } }, pagerBottom),
@@ -59,7 +74,8 @@ export async function render(ctx, el) {
       clear(pagerTop); clear(pagerBottom); clear(bulk); clear(sqlInfo);
       return;
     }
-    const pages = Math.max(1, Math.ceil(data.total / st.size));
+    // size 0 = all rows on one page.
+    const pages = st.size ? Math.max(1, Math.ceil(data.total / st.size)) : 1;
     if (st.page > pages && data.total > 0) { st.page = pages; return load(); }
     sqlInfo.textContent = data.sql;
     drawPager(pagerTop, pages);
@@ -74,14 +90,16 @@ export async function render(ctx, el) {
     });
     const goto = p => () => { st.page = p; load(); };
     const from = data.total ? (st.page - 1) * st.size + 1 : 0;
-    const to = Math.min(data.total, st.page * st.size);
+    const to = st.size ? Math.min(data.total, st.page * st.size) : data.rows.length;
     clear(host,
       h('button', { disabled: st.page <= 1, onclick: goto(1) }, '«'),
       h('button', { disabled: st.page <= 1, onclick: goto(st.page - 1) }, '‹'),
       'Page', pageInput, `of ${formatNumber(pages)}`,
       h('button', { disabled: st.page >= pages, onclick: goto(st.page + 1) }, '›'),
       h('button', { disabled: st.page >= pages, onclick: goto(pages) }, '»'),
-      h('span', { class: 'muted' }, `Rows ${formatNumber(from)}–${formatNumber(to)} of ${data.exact ? '' : '~'}${formatNumber(data.total)}`));
+      h('span', { class: 'muted' }, `Rows ${formatNumber(from)}–${formatNumber(to)} of ${data.exact ? '' : '~'}${formatNumber(data.total)}`),
+      !st.size && data.rows.length >= data.limit
+        ? h('span', { class: 'muted' }, `(capped at ${formatNumber(data.limit)} — use a WHERE filter to narrow it)`) : null);
   }
 
   function keyOf(row) {

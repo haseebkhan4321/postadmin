@@ -73,10 +73,9 @@ h3 { font-size: 14px; margin: 18px 0 8px; font-weight: 600; }
   background: var(--accent); color: #fff; border-radius: 5px;
   font-size: 11px; padding: 3px 5px; letter-spacing: .5px;
 }
-.sidebar-tools { display: flex; gap: 6px; padding: 0 10px 8px; }
-.sidebar-tools select { flex: 1; min-width: 0; }
-#tree-filter { margin: 0 10px 8px; }
-#tree { flex: 1; overflow: auto; padding: 0 4px 20px; user-select: none; }
+.sidebar-tools { display: flex; gap: 4px; padding: 0 10px 8px; border-bottom: 1px solid var(--border); }
+#tree-filter { flex: 1; min-width: 0; }
+#tree { flex: 1; overflow: auto; padding: 6px 4px 20px; user-select: none; }
 
 #topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -94,7 +93,7 @@ h3 { font-size: 14px; margin: 18px 0 8px; font-weight: 600; }
 
 #tabs {
   display: flex; gap: 2px; padding: 8px 16px 0; background: var(--panel);
-  border-bottom: 1px solid var(--border); overflow-x: auto;
+  border-bottom: 1px solid var(--border); overflow-x: auto; overflow-y: hidden;
 }
 #tabs:empty { display: none; }
 #tabs a {
@@ -113,10 +112,25 @@ h3 { font-size: 14px; margin: 18px 0 8px; font-weight: 600; }
 .tree-node > .tree-row:hover { background: var(--row-hover); text-decoration: none; }
 .tree-node > .tree-row.active { background: var(--accent-soft); font-weight: 600; }
 .tree-children { padding-left: 14px; }
-.tree-toggle { width: 12px; flex: none; color: var(--muted); font-size: 9px; text-align: center; }
+.tree-toggle { width: 12px; flex: none; color: var(--muted); font-size: 13px; line-height: 1; text-align: center; transition: transform .12s; }
+.tree-node.open > .tree-row > .tree-toggle { transform: rotate(90deg); }
 .tree-icon { flex: none; width: 16px; text-align: center; font-size: 12px; }
 .tree-label { overflow: hidden; text-overflow: ellipsis; }
 .tree-meta { margin-left: auto; color: var(--muted); font-size: 11px; padding-left: 6px; }
+/* Connection groups and connections at the tree root */
+.tree-conn-group + .tree-conn-group { margin-top: 6px; }
+.tree-conn-group > .tree-row {
+  color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; padding: 4px 6px;
+}
+.tree-conn-group > .tree-row:hover { color: var(--text); }
+.tree-conn-group > .tree-row .tree-meta {
+  background: var(--border); color: var(--text); border-radius: 8px; padding: 0 6px; font-size: 10px; margin-left: 6px;
+}
+.tree-conn-group > .tree-children { padding-left: 4px; }
+.tree-conn > .tree-row { padding-top: 4px; padding-bottom: 4px; }
+.tree-conn.open > .tree-row:not(.active) { font-weight: 600; }
+.conn-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 0 2px var(--sidebar); }
+.tree-node > .tree-row.active { box-shadow: inset 3px 0 0 var(--accent); }
 .tree-group { color: var(--muted); font-size: 11px; text-transform: uppercase; padding: 4px 6px 2px; letter-spacing: .4px; }
 .tree-empty, .tree-loading { color: var(--muted); padding: 2px 6px 2px 22px; font-style: italic; }
 
@@ -238,6 +252,8 @@ pre.sql-preview {
 .conn-card .name { font-weight: 600; font-size: 14px; color: var(--text); }
 .conn-card .uri { color: var(--muted); font-family: var(--mono); font-size: 11px; word-break: break-all; }
 .conn-card .row { display: flex; gap: 6px; margin-top: 4px; }
+.conn-group-head { display: flex; align-items: center; gap: 6px; margin: 4px 0 8px; }
+.conn-group-head h3 { margin: 0; font-size: 14px; }
 
 /* SQL editor */
 .CodeMirror {
@@ -316,3 +332,9 @@ body.popup #sidebar, body.popup #resizer, body.popup #tabs { display: none; }
   border: none; background: none; padding: 6px 10px; border-radius: 4px; text-align: left;
 }
 .dropdown-item:hover { background: var(--row-hover); border: none; }
+
+/* Browse: generated SQL, revealed by the SQL toggle */
+.sql-info { margin-bottom: 6px; word-break: break-all; }
+.sql-info[hidden] { display: none; }
+.sql-toggle { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .3px; }
+.sql-toggle.active { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }

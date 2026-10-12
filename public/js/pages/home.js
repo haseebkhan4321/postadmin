@@ -1,6 +1,6 @@
 import { api } from '../api.js';
-import { h, append, clear, toast, modal, errorBox, route } from '../ui.js';
-import { forgetConnection } from '../app.js';
+import { h, append, clear, toast, modal, errorBox, route, groupConnections, DEFAULT_GROUP } from '../ui.js';
+import { forgetConnection, refresh } from '../app.js';
 
 const COLORS = ['#336791', '#1e8449', '#c0392b', '#8e44ad', '#d35400', '#16a085', '#7f8c8d'];
 
@@ -10,8 +10,14 @@ function buildUri({ host, port, user, password, database, sslmode }) {
   return `postgresql://${auth}${host || 'localhost'}:${port || 5432}/${encodeURIComponent(database || 'postgres')}${q}`;
 }
 
-async function editConnection(existing, onSaved) {
+// groups: existing group names offered as suggestions; group: preset for a new connection.
+async function editConnection(existing, onSaved, { groups = [], group = '' } = {}) {
   const name = h('input', { value: existing?.name || '', placeholder: 'My database', style: { width: '100%' } });
+  const groupList = h('datalist', { id: 'conn-groups' }, groups.map(g => h('option', { value: g })));
+  const groupInput = h('input', {
+    value: existing ? existing.group || '' : group, placeholder: `${DEFAULT_GROUP} (default) — or e.g. Production, Client X`,
+    list: 'conn-groups', style: { width: '100%' },
+  });
   const uri = h('input', {
     value: existing?.uri || '', placeholder: 'postgresql://user:password@host:5432/dbname?sslmode=require',
     style: { width: '100%' }, class: 'mono',
@@ -62,6 +68,7 @@ async function editConnection(existing, onSaved) {
       h('div', { class: 'form-grid', style: { gridTemplateColumns: 'max-content 1fr' } },
         h('label', null, 'Name'), name,
         h('label', null, 'URI'), uri,
+        h('label', null, 'Group'), h('div', null, groupInput, groupList),
         h('label', null, 'Color'), swatches),
       builder,
       h('p', { class: 'muted small' }, 'Saved in plain text on this computer only. SSL settings in the URI (sslmode=require) are honoured.'),
@@ -72,7 +79,7 @@ async function editConnection(existing, onSaved) {
       {
         label: 'Save', class: 'primary',
         action: async () => {
-          const body = { name: name.value.trim() || 'Untitled', uri: uri.value.trim(), color };
+          const body = { name: name.value.trim() || 'Untitled', uri: uri.value.trim(), color, group: groupInput.value.trim() };
           try {
             const res = existing ? await api.put(`/connections/${existing.id}`, body) : await api.post('/connections', body);
             if (existing) forgetConnection(existing.id);
@@ -90,11 +97,20 @@ async function editConnection(existing, onSaved) {
   return saved;
 }
 
+// Opens the new-connection form from anywhere (sidebar "+"), suggesting existing groups.
+export async function newConnection(group = '') {
+  const conns = await api.get('/connections').catch(() => []);
+  const groups = groupConnections(conns).map(([g]) => g);
+  return editConnection(null, c => { toast('Connection saved'); location.hash = route('c', c.id); }, { groups, group });
+}
+
 export async function render(ctx, el) {
   const conns = await api.get('/connections');
-  const reload = () => render(ctx, clear(el));
+  const groups = groupConnections(conns);
+  const groupNames = groups.map(([g]) => g);
+  const create = group => newConnection(group);
 
-  const list = conns.map(c => h('div', { class: 'conn-card', style: { borderLeftColor: c.color } },
+  const card = c => h('div', { class: 'conn-card', style: { borderLeftColor: c.color } },
     h('a', { class: 'name', href: route('c', c.id) }, c.name),
     h('div', { class: 'uri' }, c.uri),
     h('div', { class: 'row' },
@@ -107,7 +123,7 @@ export async function render(ctx, el) {
           } catch (err) { toast(err.message, 'error'); }
         },
       }, 'Test'),
-      h('button', { onclick: async () => editConnection(await api.get(`/connections/${c.id}`), () => { toast('Saved'); reload(); }) }, 'Edit'),
+      h('button', { onclick: async () => editConnection(await api.get(`/connections/${c.id}`), () => { toast('Saved'); refresh(); }, { groups: groupNames }) }, 'Edit'),
       h('button', {
         class: 'danger',
         onclick: async () => {
@@ -119,16 +135,40 @@ export async function render(ctx, el) {
           await api.del(`/connections/${c.id}`);
           forgetConnection(c.id);
           toast('Connection removed');
-          reload();
+          refresh();
         },
-      }, 'Delete'))));
+      }, 'Delete')));
+
+  const deleteGroup = async g => {
+    const ok = await modal({
+      title: 'Delete group',
+      body: `Delete the group "${g}"? Its connections move to ${DEFAULT_GROUP}; none are removed.`,
+      buttons: [{ label: 'Cancel', value: false }, { label: 'Delete group', value: true, class: 'danger' }],
+    });
+    if (!ok) return;
+    try {
+      await api.del(`/connections/groups/${encodeURIComponent(g)}`);
+      toast(`Group "${g}" deleted`);
+      refresh();
+    } catch (err) { toast(err.message, 'error'); }
+  };
+
+  const sections = groups.map(([g, list]) => {
+    const isDefault = g === DEFAULT_GROUP;
+    return h('section', { class: 'conn-group' },
+      h('div', { class: 'conn-group-head' },
+        h('h3', null, g, h('span', { class: 'muted' }, ` (${list.length})`), isDefault ? h('span', { class: 'muted small' }, ' · default') : null),
+        h('button', { class: 'icon-btn', title: `New connection in "${g}"`, onclick: () => create(isDefault ? '' : g) }, '+'),
+        isDefault ? null : h('button', { class: 'icon-btn', title: `Delete group "${g}"`, onclick: () => deleteGroup(g) }, '🗑')),
+      list.length ? h('div', { class: 'conn-list' }, list.map(card)) : h('p', { class: 'muted small' }, 'No connections in this group.'));
+  });
 
   append(el,
     h('div', { class: 'toolbar' },
       h('h2', { style: { margin: 0 } }, 'Saved connections'),
       h('span', { class: 'spacer' }),
-      h('button', { class: 'primary', onclick: () => editConnection(null, c => { toast('Connection saved'); location.hash = route('c', c.id); }) }, '+ New connection')),
-    conns.length ? h('div', { class: 'conn-list' }, list)
+      h('button', { class: 'primary', onclick: () => create('') }, '+ New connection')),
+    conns.length ? sections
       : h('div', { class: 'card empty' },
         h('p', null, 'No connections yet. Paste a PostgreSQL URI to get started.'),
         h('button', { class: 'primary', onclick: () => editConnection(null, c => { location.hash = route('c', c.id); }) }, '+ New connection')),
