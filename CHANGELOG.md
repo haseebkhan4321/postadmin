@@ -6,6 +6,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-12
+
+### Added
+- Connection groups. The connection form has a **Group** field that suggests existing groups, and the home page lists connections in sections by group, each with a **+** button to add a connection to it.
+- Built-in **Local** group. Connections without a group belong to it. It is always listed first and cannot be deleted. Deleting any other group moves its connections to Local; no connection is removed.
+- **All rows** option in the Browse rows selector. It loads the whole table on one page, capped at 100,000 rows.
+- **SQL** toggle on the Browse tab that shows or hides the generated SELECT statement. The choice is remembered.
+
+### Changed
+- The sidebar is one tree: groups, then connections, databases, schemas and tables. Groups collapse and remember their state. Connections show their colour, and the current one stays highlighted and expanded. The connection dropdown is removed.
+- The sidebar filter also matches connection names. Press `/` to focus it and Esc to clear it. A **+** button next to it adds a connection.
+- The Browse tab hides the generated SELECT statement by default.
+
+### Fixed
+- A stray vertical scrollbar no longer appears on the tab bar.
+
 ## [1.3.1] - 2026-10-05
 
 ### Fixed
