@@ -6,7 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+- The Browse tab's WHERE bar is replaced by an editable query box. It starts as `SELECT * FROM schema.table`. Edit it and press **Run** or Ctrl+Enter to page through any read-only query; **Reset** goes back to the default. Rows stay editable when every column the query returns belongs to the table and the primary key is included. Joins and computed columns make the result read-only.
+- The query box is one card with an action bar: **Run** (with its Ctrl+Enter shortcut), **Reset**, and reload. An "Edited — press Run" note appears while the editor differs from the query shown in the grid.
+- The rows-per-page selector moved to the bottom pagination bar.
+- The theme button cycles through three modes: ☀ Light, ☾ Dark and ☕ **Warm**, a new low-glare paper-toned theme with matching SQL highlighting. Light and Dark have refreshed palettes, with Dark a little deeper and higher-contrast.
+
+### Fixed
+- Changing page in Browse no longer flickers. The current page stays visible, dimmed, until the next one arrives, and quick repeated ‹ › clicks keep stepping through pages.
+
 ### Removed
+- The Browse **SQL** toggle. The query is always visible in the query box.
 - The **All rows** option in the Browse rows selector. The largest page size is 1,000 rows again.
 
 ## [1.5.0] - 2026-10-12

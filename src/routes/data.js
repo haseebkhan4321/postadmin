@@ -20,6 +20,20 @@ function selectList(columns, alias) {
   return columns.map(c => `${alias}.${ident(c.name)}::text AS ${ident(c.name)}`).join(', ');
 }
 
+// Leaves every value as Postgres's own text output, like the ::text casts of the default query.
+const RAW_TEXT = { getTypeParser: () => value => value };
+
+// Result rows keyed by column name; a repeated name (e.g. from a join) becomes "name (2)".
+function keyedRows(fields, rows) {
+  const seen = new Map();
+  const names = fields.map(f => {
+    const n = (seen.get(f.name) || 0) + 1;
+    seen.set(f.name, n);
+    return n === 1 ? f.name : `${f.name} (${n})`;
+  });
+  return { names, rows: rows.map(r => Object.fromEntries(names.map((n, i) => [n, r[i]]))) };
+}
+
 // Builds `WHERE pk = $n AND ...` from a row identity: either primary-key values or a ctid.
 function whereFor(structure, key, params) {
   if (key && key[CTID] !== undefined) {
@@ -54,9 +68,12 @@ router.get(`${base}/rows`, wrap(async (req, res) => {
   const structure = await tableStructure(p, req.params.schema, req.params.table);
   const size = Math.min(Math.max(parseInt(req.query.size, 10) || 50, 1), MAX_PAGE_SIZE);
   const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
-  const filter = String(req.query.filter || '').trim();
   const isTable = ['r', 'p'].includes(structure.relkind);
   const useCtid = isTable && !structure.primaryKey.length;
+  // A query typed in the Browse box replaces the default one. It runs as a subquery inside a
+  // read-only transaction, so it can only read, and LIMIT stops Postgres after one page.
+  const custom = String(req.query.query || '').trim().replace(/;\s*$/, '');
+  if (custom) return res.json(await customRows(p, custom, { req, structure, size, page, isTable }));
 
   let order = '';
   if (req.query.sort) {
@@ -66,7 +83,7 @@ router.get(`${base}/rows`, wrap(async (req, res) => {
     order = ' ORDER BY ' + structure.primaryKey.map(c => `_t.${ident(c)}`).join(', ');
   }
 
-  const from = `FROM ${qualified(req.params.schema, req.params.table)} AS _t${filter ? ` WHERE (${filter})` : ''}`;
+  const from = `FROM ${qualified(req.params.schema, req.params.table)} AS _t`;
   const extra = useCtid ? `, _t.ctid::text AS ${CTID}` : '';
   const sql = `SELECT ${selectList(structure.columns, '_t')}${extra} ${from}${order} LIMIT ${size} OFFSET ${(page - 1) * size}`;
 
@@ -78,7 +95,7 @@ router.get(`${base}/rows`, wrap(async (req, res) => {
 
     let total = Number(structure.estimate);
     let exact = false;
-    if (filter || !isTable || total < EXACT_COUNT_LIMIT) {
+    if (!isTable || total < EXACT_COUNT_LIMIT) {
       const count = await client.query(`SELECT count(*)::bigint AS n ${from}`);
       total = Number(count.rows[0].n);
       exact = true;
@@ -93,6 +110,31 @@ router.get(`${base}/rows`, wrap(async (req, res) => {
     client.release();
   }
 }));
+
+async function customRows(p, custom, { req, structure, size, page, isTable }) {
+  const order = req.query.sort ? ` ORDER BY _q.${ident(req.query.sort)} ${req.query.dir === 'desc' ? 'DESC' : 'ASC'} NULLS LAST` : '';
+  const sql = `SELECT * FROM (\n${custom}\n) AS _q${order} LIMIT ${size} OFFSET ${(page - 1) * size}`;
+  const client = await p.connect();
+  try {
+    await client.query('BEGIN READ ONLY');
+    await client.query("SET LOCAL statement_timeout = '60s'");
+    const result = await client.query({ text: sql, rowMode: 'array', types: RAW_TEXT });
+    const { names, rows } = keyedRows(result.fields, result.rows);
+    const count = await client.query(`SELECT count(*)::bigint AS n FROM (\n${custom}\n) AS _q`);
+    await client.query('COMMIT');
+    // Editable only when every returned column is a column of this table and the whole primary key is
+    // included, so an edit can't land on the wrong row (joins and computed columns are read-only).
+    const editable = isTable && structure.primaryKey.length > 0 && structure.primaryKey.every(c => names.includes(c))
+      && names.every(n => structure.columns.some(c => c.name === n));
+    return { sql, rows, total: Number(count.rows[0].n), exact: true, page, size, structure, editable, keyMode: 'pk', columns: names, custom: true };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    err.sql = sql;
+    throw err;
+  } finally {
+    client.release();
+  }
+}
 
 router.post(`${base}/rows`, wrap(async (req, res) => {
   const p = getPool(req.params.id, req.params.db);

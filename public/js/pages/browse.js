@@ -10,74 +10,101 @@ const state = new Map(); // per-table view state, kept for the session
 
 function stateFor(ctx) {
   const key = `${ctx.id}/${ctx.db}/${ctx.schema}/${ctx.table}`;
-  if (!state.has(key)) state.set(key, { page: 1, size: 50, sort: null, dir: 'asc', filter: '' });
+  // query: the SQL typed in the query box; '' means the default SELECT * of the table.
+  if (!state.has(key)) state.set(key, { page: 1, size: 50, sort: null, dir: 'asc', query: '' });
   return state.get(key);
 }
+
+const quote = name => /^[a-z_][a-z0-9_]*$/.test(name) ? name : `"${name.replace(/"/g, '""')}"`;
+const normalize = sql => sql.trim().replace(/;\s*$/, '').replace(/\s+/g, ' ');
 
 export async function render(ctx, el) {
   const st = stateFor(ctx);
   const base = paths.table(ctx.id, ctx.db, ctx.schema, ctx.table);
-  const filterInput = h('input', {
-    value: st.filter, placeholder: 'WHERE …  e.g.  status = \'active\' AND id > 100', class: 'mono',
-    style: { flex: '1', minWidth: '260px' },
-    onkeydown: ev => { if (ev.key === 'Enter') { st.filter = filterInput.value.trim(); st.page = 1; load(); } },
-  });
+  const defaultQuery = `SELECT * FROM ${quote(ctx.schema)}.${quote(ctx.table)}`;
   const sizeSelect = h('select', {
-    value: String(st.size),
+    value: String(st.size), title: 'Rows per page',
     onchange: () => { st.size = Number(sizeSelect.value); st.page = 1; load(); },
   }, [25, 50, 100, 250, 500, 1000].map(n => h('option', { value: String(n) }, `${n} rows`)));
 
   const pagerTop = h('div', { class: 'pager' });
   const pagerBottom = h('div', { class: 'pager' });
   const gridHost = h('div');
-  // The generated SELECT is hidden behind a toggle; the choice is remembered across tables.
-  let showSql = false;
-  try { showSql = localStorage.getItem('pa-browse-sql') === '1'; } catch { /* storage unavailable */ }
-  const sqlInfo = h('div', { class: 'muted small mono sql-info', hidden: !showSql });
-  const sqlToggle = h('button', {
-    class: 'icon-btn sql-toggle' + (showSql ? ' active' : ''), title: 'Show the SQL query',
-    onclick: () => {
-      showSql = !showSql;
-      sqlInfo.hidden = !showSql;
-      sqlToggle.classList.toggle('active', showSql);
-      sqlToggle.title = showSql ? 'Hide the SQL query' : 'Show the SQL query';
-      try { localStorage.setItem('pa-browse-sql', showSql ? '1' : '0'); } catch { /* storage unavailable */ }
-    },
-  }, 'SQL');
-  if (showSql) sqlToggle.title = 'Hide the SQL query';
   const bulk = h('div', { class: 'toolbar', style: { marginTop: '8px' } });
 
+  // Query card: the editor, with its actions in a footer bar.
+  const textarea = h('textarea');
+  const resetBtn = h('button', { class: 'ghost', title: `Back to ${defaultQuery}`, onclick: () => { editor.setValue(defaultQuery); runQuery(); } }, '↺ Reset');
+  const editedNote = h('span', { class: 'query-edited', hidden: true }, '● Edited — press Run');
+  const card = h('div', { class: 'query-card' },
+    h('div', { class: 'query-editor' }, textarea),
+    h('div', { class: 'query-bar' },
+      h('button', { class: 'primary run-btn', title: 'Run the query (Ctrl+Enter)', onclick: () => runQuery() },
+        '▶ Run', h('kbd', null, 'Ctrl ↵')),
+      resetBtn,
+      editedNote,
+      h('span', { class: 'spacer' }),
+      h('span', { class: 'query-hint' }, 'Read-only · paged'),
+      h('button', { class: 'icon-btn ghost', title: 'Reload results', onclick: () => load() }, '↻')));
   append(el,
-    h('div', { class: 'toolbar' },
-      h('strong', null, 'WHERE'), filterInput,
-      h('button', { class: 'primary', onclick: () => { st.filter = filterInput.value.trim(); st.page = 1; load(); } }, 'Filter'),
-      st.filter ? h('button', { onclick: () => { st.filter = ''; filterInput.value = ''; st.page = 1; load(); } }, 'Clear') : null,
-      sizeSelect,
-      h('button', { title: 'Reload', onclick: () => load() }, '↻')),
-    h('div', { class: 'toolbar' }, pagerTop, h('span', { class: 'spacer' }), sqlToggle),
-    sqlInfo,
+    card,
+    h('div', { class: 'toolbar' }, pagerTop),
     gridHost,
     h('div', { class: 'toolbar', style: { marginTop: '8px' } }, pagerBottom),
     bulk);
 
+  const editor = CodeMirror.fromTextArea(textarea, {
+    mode: 'text/x-pgsql', lineNumbers: false, matchBrackets: true, lineWrapping: true, viewportMargin: Infinity,
+    extraKeys: { 'Ctrl-Enter': () => runQuery(), 'Cmd-Enter': () => runQuery() },
+  });
+  editor.setValue(st.query || defaultQuery);
+  editor.on('focus', () => card.classList.add('focused'));
+  editor.on('blur', () => card.classList.remove('focused'));
+  // Flags edits that haven't been run yet, so the grid is never mistaken for their result.
+  const syncEdited = () => { editedNote.hidden = normalize(editor.getValue()) === normalize(st.query || defaultQuery); };
+  editor.on('change', syncEdited);
+
+  function runQuery() {
+    const sql = editor.getValue();
+    st.query = normalize(sql) === normalize(defaultQuery) ? '' : sql.trim();
+    st.page = 1;
+    st.sort = null;
+    load();
+  }
+
   let data;
 
+  let loadSeq = 0;
   async function load() {
-    clear(gridHost, spinner());
-    const q = new URLSearchParams({ page: st.page, size: st.size, filter: st.filter });
+    // Keep the current page on screen (dimmed) while the next one loads, so the layout doesn't jump.
+    // Only the first load, with nothing to show yet, gets the full spinner.
+    const seq = ++loadSeq;
+    if (gridHost.querySelector('table')) gridHost.classList.add('grid-loading');
+    else clear(gridHost, spinner());
+    resetBtn.style.display = st.query ? '' : 'none';
+    syncEdited();
+    const q = new URLSearchParams({ page: st.page, size: st.size });
+    if (st.query) q.set('query', st.query);
     if (st.sort) { q.set('sort', st.sort); q.set('dir', st.dir); }
+    let next;
     try {
-      data = await api.get(`${base}/rows?${q}`);
+      next = await api.get(`${base}/rows?${q}`);
     } catch (err) {
+      if (seq !== loadSeq) return;
+      gridHost.classList.remove('grid-loading');
       clear(gridHost, errorBox(err));
-      clear(pagerTop); clear(pagerBottom); clear(bulk); clear(sqlInfo);
+      clear(pagerTop); clear(pagerBottom, sizeSelect); clear(bulk);
       return;
     }
+    // A newer request (e.g. clicking through pages quickly) supersedes this one.
+    if (seq !== loadSeq) return;
+    data = next;
+    gridHost.classList.remove('grid-loading');
     const pages = Math.max(1, Math.ceil(data.total / st.size));
     if (st.page > pages && data.total > 0) { st.page = pages; return load(); }
-    sqlInfo.textContent = data.sql;
     drawPager(pagerTop, pages);
     drawPager(pagerBottom, pages);
+    append(pagerBottom, sizeSelect);
     drawGrid();
   }
 
@@ -87,15 +114,25 @@ export async function render(ctx, el) {
       onchange: () => { st.page = Math.min(pages, Math.max(1, Number(pageInput.value) || 1)); load(); },
     });
     const goto = p => () => { st.page = p; load(); };
+    // Relative to the current page, so quick repeated clicks keep stepping while a page loads.
+    const step = d => () => { st.page = Math.min(pages, Math.max(1, st.page + d)); load(); };
     const from = data.total ? (st.page - 1) * st.size + 1 : 0;
     const to = Math.min(data.total, st.page * st.size);
     clear(host,
       h('button', { disabled: st.page <= 1, onclick: goto(1) }, '«'),
-      h('button', { disabled: st.page <= 1, onclick: goto(st.page - 1) }, '‹'),
+      h('button', { disabled: st.page <= 1, onclick: step(-1) }, '‹'),
       'Page', pageInput, `of ${formatNumber(pages)}`,
-      h('button', { disabled: st.page >= pages, onclick: goto(st.page + 1) }, '›'),
+      h('button', { disabled: st.page >= pages, onclick: step(1) }, '›'),
       h('button', { disabled: st.page >= pages, onclick: goto(pages) }, '»'),
       h('span', { class: 'muted' }, `Rows ${formatNumber(from)}–${formatNumber(to)} of ${data.exact ? '' : '~'}${formatNumber(data.total)}`));
+  }
+
+  // Columns of the current result: the table's columns, or for a custom query the columns it
+  // returned (computed ones are read-only).
+  function resultColumns() {
+    const { structure } = data;
+    if (!data.custom) return displayColumns(structure);
+    return data.columns.map(n => structure.columns.find(c => c.name === n) || { name: n, type: 'computed', computed: true, nullable: true });
   }
 
   function keyOf(row) {
@@ -105,11 +142,11 @@ export async function render(ctx, el) {
 
   function drawGrid() {
     const { structure, rows, editable } = data;
-    const cols = displayColumns(structure);
+    const cols = resultColumns();
     const selected = new Set();
 
     if (!rows.length) {
-      clear(gridHost, h('div', { class: 'card empty' }, st.filter ? 'No rows match the filter.' : 'This table is empty.'));
+      clear(gridHost, h('div', { class: 'card empty' }, st.query ? 'No rows match the query.' : 'This table is empty.'));
       clear(bulk);
       return;
     }
@@ -187,7 +224,7 @@ export async function render(ctx, el) {
   function cell(row, column, editable) {
     const td = h('td');
     displayCell(td, row[column.name], column);
-    if (!editable || column.generated === 's') return td;
+    if (!editable || column.computed || column.generated === 's') return td;
     td.classList.add('editable');
     td.addEventListener('dblclick', () => startEdit(td, row, column));
     return td;
@@ -232,7 +269,7 @@ export async function render(ctx, el) {
   }
 
   async function editRow(row) {
-    const form = rowForm(displayColumns(data.structure), row, { mode: 'edit' });
+    const form = rowForm(resultColumns().filter(c => !c.computed), row, { mode: 'edit' });
     const status = h('div');
     await modal({
       title: `Edit row in ${ctx.table}`,

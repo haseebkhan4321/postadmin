@@ -155,12 +155,21 @@ filterInput.addEventListener('keydown', ev => {
 document.getElementById('tree-refresh').addEventListener('click', () => { infoCache.clear(); refresh(); });
 filterInput.addEventListener('input', () => renderTree(parseHash()));
 
+// The theme button cycles light → dark → warm and shows the current mode.
+const THEMES = [['light', '☀', 'Light'], ['dark', '☾', 'Dark'], ['warm', '☕', 'Warm']];
+const themeBtn = document.getElementById('theme-toggle');
 function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  try { localStorage.setItem('pa-theme', theme); } catch { /* storage unavailable */ }
+  const i = Math.max(0, THEMES.findIndex(t => t[0] === theme));
+  const [name, icon, label] = THEMES[i];
+  document.documentElement.dataset.theme = name;
+  themeBtn.textContent = icon;
+  themeBtn.title = `Theme: ${label} — click for ${THEMES[(i + 1) % THEMES.length][2]}`;
+  try { localStorage.setItem('pa-theme', name); } catch { /* storage unavailable */ }
 }
-document.getElementById('theme-toggle').addEventListener('click', () =>
-  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+themeBtn.addEventListener('click', () => {
+  const i = THEMES.findIndex(t => t[0] === document.documentElement.dataset.theme);
+  applyTheme(THEMES[(i + 1) % THEMES.length][0]);
+});
 let savedTheme = null;
 try { savedTheme = localStorage.getItem('pa-theme'); } catch { /* storage unavailable */ }
 applyTheme(savedTheme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
