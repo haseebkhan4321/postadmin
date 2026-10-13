@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Removed
+- The **All rows** option in the Browse rows selector. The largest page size is 1,000 rows again.
+
 ## [1.5.0] - 2026-10-12
 
 ### Added

@@ -25,8 +25,7 @@ export async function render(ctx, el) {
   const sizeSelect = h('select', {
     value: String(st.size),
     onchange: () => { st.size = Number(sizeSelect.value); st.page = 1; load(); },
-  }, [25, 50, 100, 250, 500, 1000].map(n => h('option', { value: String(n) }, `${n} rows`)),
-  h('option', { value: '0' }, 'All rows'));
+  }, [25, 50, 100, 250, 500, 1000].map(n => h('option', { value: String(n) }, `${n} rows`)));
 
   const pagerTop = h('div', { class: 'pager' });
   const pagerBottom = h('div', { class: 'pager' });
@@ -74,8 +73,7 @@ export async function render(ctx, el) {
       clear(pagerTop); clear(pagerBottom); clear(bulk); clear(sqlInfo);
       return;
     }
-    // size 0 = all rows on one page.
-    const pages = st.size ? Math.max(1, Math.ceil(data.total / st.size)) : 1;
+    const pages = Math.max(1, Math.ceil(data.total / st.size));
     if (st.page > pages && data.total > 0) { st.page = pages; return load(); }
     sqlInfo.textContent = data.sql;
     drawPager(pagerTop, pages);
@@ -90,16 +88,14 @@ export async function render(ctx, el) {
     });
     const goto = p => () => { st.page = p; load(); };
     const from = data.total ? (st.page - 1) * st.size + 1 : 0;
-    const to = st.size ? Math.min(data.total, st.page * st.size) : data.rows.length;
+    const to = Math.min(data.total, st.page * st.size);
     clear(host,
       h('button', { disabled: st.page <= 1, onclick: goto(1) }, '«'),
       h('button', { disabled: st.page <= 1, onclick: goto(st.page - 1) }, '‹'),
       'Page', pageInput, `of ${formatNumber(pages)}`,
       h('button', { disabled: st.page >= pages, onclick: goto(st.page + 1) }, '›'),
       h('button', { disabled: st.page >= pages, onclick: goto(pages) }, '»'),
-      h('span', { class: 'muted' }, `Rows ${formatNumber(from)}–${formatNumber(to)} of ${data.exact ? '' : '~'}${formatNumber(data.total)}`),
-      !st.size && data.rows.length >= data.limit
-        ? h('span', { class: 'muted' }, `(capped at ${formatNumber(data.limit)} — use a WHERE filter to narrow it)`) : null);
+      h('span', { class: 'muted' }, `Rows ${formatNumber(from)}–${formatNumber(to)} of ${data.exact ? '' : '~'}${formatNumber(data.total)}`));
   }
 
   function keyOf(row) {

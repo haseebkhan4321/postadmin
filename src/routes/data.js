@@ -7,8 +7,6 @@ const router = express.Router({ mergeParams: true });
 
 const EXACT_COUNT_LIMIT = 100000;
 const MAX_PAGE_SIZE = 1000;
-// size=0 ("All rows") returns everything up to this cap, so a huge table cannot hang the browser.
-const ALL_ROWS_MAX = 100000;
 const CTID = '__ctid';
 
 function badRequest(message) {
@@ -54,9 +52,8 @@ const base = '/db/:db/schemas/:schema/tables/:table';
 router.get(`${base}/rows`, wrap(async (req, res) => {
   const p = getPool(req.params.id, req.params.db);
   const structure = await tableStructure(p, req.params.schema, req.params.table);
-  const all = req.query.size === '0';
-  const size = all ? ALL_ROWS_MAX : Math.min(Math.max(parseInt(req.query.size, 10) || 50, 1), MAX_PAGE_SIZE);
-  const page = all ? 1 : Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const size = Math.min(Math.max(parseInt(req.query.size, 10) || 50, 1), MAX_PAGE_SIZE);
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
   const filter = String(req.query.filter || '').trim();
   const isTable = ['r', 'p'].includes(structure.relkind);
   const useCtid = isTable && !structure.primaryKey.length;
@@ -87,7 +84,7 @@ router.get(`${base}/rows`, wrap(async (req, res) => {
       exact = true;
     }
     await client.query('COMMIT');
-    res.json({ sql, rows, total, exact, page, size: all ? 0 : size, limit: size, structure, editable: isTable, keyMode: useCtid ? 'ctid' : 'pk' });
+    res.json({ sql, rows, total, exact, page, size, structure, editable: isTable, keyMode: useCtid ? 'ctid' : 'pk' });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     err.sql = sql;
