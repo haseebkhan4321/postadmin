@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-13
+
 ### Changed
 - The Browse tab's WHERE bar is replaced by an editable query box. It starts as `SELECT * FROM schema.table`. Edit it and press **Run** or Ctrl+Enter to page through any read-only query; **Reset** goes back to the default. Rows stay editable when every column the query returns belongs to the table and the primary key is included. Joins and computed columns make the result read-only.
 - The query box is one card with an action bar: **Run** (with its Ctrl+Enter shortcut), **Reset**, and reload. An "Edited — press Run" note appears while the editor differs from the query shown in the grid.
