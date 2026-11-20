@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.github
+.signpath
+installer
+launcher
+scripts
+*.md
+start.bat
+.env

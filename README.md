@@ -37,6 +37,92 @@ The server listens on `http://127.0.0.1:7070`, or the next free port, and opens 
 - `--no-open` starts the server without opening the browser.
 - `npm run dev` restarts the server automatically when the code changes.
 
+## Deploy on a server
+
+PostAdmin can also run on a Linux server and be opened from a URL. Hosted mode is turned on with environment variables, and the desktop app is unaffected.
+
+| Variable | Purpose |
+| --- | --- |
+| `HOST=0.0.0.0` | Listen beyond localhost. PostAdmin **refuses to start** this way unless a login is set. |
+| `POSTADMIN_USER`, `POSTADMIN_PASSWORD` | Login (HTTP Basic auth). The password needs 12+ characters. 10 failed attempts lock that IP out for 15 minutes. |
+| `POSTADMIN_ALLOWED_HOSTS` | Comma-separated domain(s) you serve it on, e.g. `db.example.com`. Other Host headers get `403`. |
+| `POSTADMIN_TRUST_PROXY` | Set to `loopback` behind a local reverse proxy so lockouts use the real client IP. |
+
+Basic auth sends the password with every request, so **always put HTTPS in front** (Caddy or Nginx below). Because PostAdmin can run any SQL on every saved database, also consider limiting access with a firewall IP allowlist, a VPN/Tailscale, or Cloudflare Access.
+
+### With Docker (recommended)
+
+```bash
+git clone https://github.com/haseebkhan4321/postgres-sql-ui.git postadmin && cd postadmin
+cp .env.example .env && nano .env        # set domain, user, long password
+docker compose up -d --build             # listens on 127.0.0.1:7070 only
+```
+
+Saved connections live in the `postadmin-data` volume.
+
+### Without Docker (Node 20+, systemd)
+
+```bash
+sudo useradd --system --home /opt/postadmin postadmin
+sudo git clone https://github.com/haseebkhan4321/postgres-sql-ui.git /opt/postadmin
+cd /opt/postadmin && sudo npm ci --omit=dev
+sudo mkdir -p /var/lib/postadmin && sudo chown postadmin /var/lib/postadmin
+```
+
+`/etc/systemd/system/postadmin.service`:
+
+```ini
+[Unit]
+Description=PostAdmin
+After=network.target
+
+[Service]
+User=postadmin
+WorkingDirectory=/opt/postadmin
+ExecStart=/usr/bin/node src/server.js --no-open
+Environment=HOST=127.0.0.1 PORT=7070 POSTADMIN_DATA=/var/lib/postadmin POSTADMIN_NO_UPDATE_CHECK=1 POSTADMIN_TRUST_PROXY=loopback
+Environment=POSTADMIN_ALLOWED_HOSTS=db.example.com POSTADMIN_USER=admin POSTADMIN_PASSWORD=change-me-to-something-long
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo chmod 600 /etc/systemd/system/postadmin.service
+sudo systemctl daemon-reload && sudo systemctl enable --now postadmin
+```
+
+Keeping `HOST=127.0.0.1` here is fine because the proxy on the same machine is the only client. The login is still enforced whenever the user and password are set.
+
+### HTTPS reverse proxy
+
+Point a DNS `A` record for `db.example.com` at the server, then use **Caddy**, which gets a certificate automatically, in `/etc/caddy/Caddyfile`:
+
+```
+db.example.com {
+    reverse_proxy 127.0.0.1:7070
+}
+```
+
+Or use **Nginx** with certbot (`sudo certbot --nginx -d db.example.com`):
+
+```nginx
+server {
+    server_name db.example.com;
+    client_max_body_size 50m;
+    location / {
+        proxy_pass http://127.0.0.1:7070;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+Open only ports 80 and 443 in the firewall (`sudo ufw allow 80,443/tcp`), and never 7070. To update, run `git pull`, then `docker compose up -d --build` or `npm ci --omit=dev && sudo systemctl restart postadmin`.
+
 ## Where data is stored
 
 Everything is stored in `%APPDATA%\PostAdmin\`:

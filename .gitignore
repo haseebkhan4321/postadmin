@@ -1,3 +1,4 @@
 node_modules/
 dist/
 launcher/logo-256.png
+.env
